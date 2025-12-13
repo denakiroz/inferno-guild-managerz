@@ -1,0 +1,5 @@
+{
+  "name": "Inferno Guild Manager",
+  "description": "A responsive RPG-themed guild management prototype for 'Sword of Justice'. Features member tracking, war party building, and leave request management.",
+  "requestFramePermissions": []
+}
