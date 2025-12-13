@@ -217,33 +217,26 @@ const App = () => {
     }
   };
 
-  const handleImportMembers = async (importedMembers: Member[]) => {
-    setIsMembersLoading(true);
-    setActionError(null);
-    try {
-      const updatedList = importedMembers.map(imp => {
-        const existing = members.find(m => m.name.toLowerCase() === imp.name.toLowerCase());
-        
-        if (existing) {
-          return {
-            ...existing,
-            class: imp.class,
-            power: imp.power,
-            branch: imp.branch, 
-          };
-        } else {
-          return imp;
-        }
-      });
-      
-      setMembers(updatedList);
-    } catch (error) {
-      console.error(error);
-      setActionError("นำเข้าข้อมูลล้มเหลว");
-    } finally {
-      setIsMembersLoading(false);
-    }
-  };
+const handleImportMembers = async (importedMembers: Member[]) => {
+  setIsMembersLoading(true);
+  setActionError(null);
+
+  try {
+    // ✅ Replace รายสาขา (ลบเฉพาะสาขาที่มีข้อมูล)
+    await memberService.replaceByBranches(importedMembers);
+
+    // ✅ Reload จาก DB เพื่อให้ได้ id จริง (Inferno-x:realId)
+    const fresh = await memberService.getAll();
+    setMembers(fresh);
+  } catch (error) {
+    console.error(error);
+    setActionError("นำเข้าข้อมูลล้มเหลว");
+  } finally {
+    setIsMembersLoading(false);
+  }
+};
+
+
   
   // Handle Leave Report (War or Personal)
   const handleReportLeave = async (memberId: string, type: 'War' | 'Personal') => {

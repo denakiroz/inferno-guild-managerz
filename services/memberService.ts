@@ -60,6 +60,7 @@ const parseCompositeId = (compositeId: string) => {
   return { branch: 'Inferno-1' as Branch, id: compositeId };
 };
 
+
 // Helper to map DB columns to App types
 const mapFromDB = (row: any, branch: Branch): Member => ({
   id: `${branch}:${row.id}`, 
@@ -177,5 +178,83 @@ export const memberService = {
       .eq('id', dbId);
       
     if (error) throw error;
+  },
+  async bulkUpsertByName(members: Member[]): Promise<void> {
+  if (!supabase) throw new Error("ไม่ได้เชื่อมต่อฐานข้อมูล");
+
+  const grouped: Record<string, Member[]> = {};
+  members.forEach(m => {
+    grouped[m.branch] = grouped[m.branch] || [];
+    grouped[m.branch].push(m);
+  });
+
+  for (const branch of Object.keys(grouped)) {
+    const table = getTableName(branch);
+
+    const { data: existing, error } = await supabase
+      .from(table)
+      .select('id, name');
+
+    if (error) throw error;
+
+    const map = new Map<string, number>();
+    existing?.forEach((r: any) =>
+      map.set(r.name.toLowerCase(), r.id)
+    );
+
+    for (const m of grouped[branch]) {
+      const payload = mapToDB(m);
+      const foundId = map.get(m.name.toLowerCase());
+
+      if (foundId) {
+        await supabase
+          .from(table)
+          .update(payload)
+          .eq('id', foundId);
+      } else {
+        await supabase
+          .from(table)
+          .insert(payload);
+      }
+    }
   }
+},async replaceByBranches(members: Member[]): Promise<void> {
+  if (!supabase) throw new Error("ไม่ได้เชื่อมต่อฐานข้อมูล");
+
+  // group by branch
+  const grouped: Record<string, Member[]> = {};
+  members.forEach(m => {
+    grouped[m.branch] = grouped[m.branch] || [];
+    grouped[m.branch].push(m);
+  });
+
+  const branches: Branch[] = ['Inferno-1', 'Inferno-2', 'Inferno-3'];
+
+  for (const branch of branches) {
+    const list = grouped[branch] || [];
+
+    // ✅ ถ้าไม่มีข้อมูลในชีตนั้น -> ไม่ลบ ไม่ insert
+    if (list.length === 0) continue;
+
+    const table = getTableName(branch);
+
+    // 1) delete all rows in that branch table
+    // Supabase ต้องมี filter เสมอ: ใช้ gt('id', 0) เป็นการลบทั้งหมดที่ id > 0
+    const { error: delErr } = await supabase
+      .from(table)
+      .delete()
+      .gt('id', 0);
+
+    if (delErr) throw delErr;
+
+    // 2) insert new rows
+    const payloads = list.map(m => mapToDB(m)); // mapToDB เดิมของคุณใช้ได้
+
+    const { error: insErr } = await supabase
+      .from(table)
+      .insert(payloads);
+
+    if (insErr) throw insErr;
+  }
+}
 };

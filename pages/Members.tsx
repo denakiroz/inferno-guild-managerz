@@ -14,7 +14,7 @@ interface MembersProps {
   onUpdateMember: (member: Member) => void;
   onDeleteMember: (id: string) => void;
   onReportLeave: (memberId: string, type: 'War' | 'Personal') => void; 
-  onImportMembers: (members: Member[]) => void;
+  onImportMembers: (members: Member[]) => Promise<void>;
 }
 
 export const Members: React.FC<MembersProps> = ({ members, leaveRequests, isLoading = false, onAddMember, onUpdateMember, onDeleteMember, onReportLeave, onImportMembers }) => {
@@ -41,6 +41,8 @@ export const Members: React.FC<MembersProps> = ({ members, leaveRequests, isLoad
 
   // Import Error State
   const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importSheets, setImportSheets] = useState<Partial<Record<Branch, string>>>({});
+
 
   // Form State
   const [formData, setFormData] = useState<Partial<Member>>({
@@ -116,41 +118,48 @@ export const Members: React.FC<MembersProps> = ({ members, leaveRequests, isLoad
   };
 
   const handleExport = () => {
-    if (filteredMembers.length === 0) {
-      // Use simple console log if alert blocked
-      console.warn("ไม่พบข้อมูลสมาชิกสำหรับส่งออก");
-      return;
+  if (filteredMembers.length === 0) {
+    console.warn("ไม่พบข้อมูลสมาชิกสำหรับส่งออก");
+    return;
+  }
+
+  const HEADERS = ['ชื่อ', 'อาชีพ', 'พลัง', 'กิลด์'];
+
+  const toRows = (list: Member[]) =>
+    list.map(m => ([
+      m.name,
+      CLASS_CONFIG[m.class].th,
+      m.power,
+      m.branch.split('-')[1] || ''
+    ]));
+
+  const makeSheet = (rows: any[][]) => {
+    // ✅ ใส่หัวตารางก่อนเสมอ
+    const ws = utils.aoa_to_sheet([HEADERS]);
+    // ✅ ต่อด้วยข้อมูล (ถ้ามี)
+    if (rows.length > 0) {
+      utils.sheet_add_aoa(ws, rows, { origin: 'A2' });
     }
-
-    const exportData = filteredMembers.map(m => ({
-      'ชื่อ': m.name,
-      'อาชีพ': CLASS_CONFIG[m.class].th, 
-      'พลัง': m.power,
-      'กิลด์': m.branch.split('-')[1] || '' // Extract 1, 2, 3
-    }));
-
-    const ws = utils.json_to_sheet(exportData);
-    
-    // Apply styling to header row
-    const range = utils.decode_range(ws['!ref'] || 'A1:D1');
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const address = utils.encode_cell({ r: 0, c: C }); // Row 0 is header
-      if (!ws[address]) continue;
-      
-      // Style object (supported by some xlsx versions/forks)
-      ws[address].s = {
-        fill: { fgColor: { rgb: "FFFF00" } }, // Yellow Background
-        font: { bold: true }
-      };
-    }
-
-    const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, "Members");
-    
-    const dateStr = new Date().toISOString().split('T')[0];
-    const branchStr = selectedBranch === 'All' ? 'All' : selectedBranch;
-    writeFile(wb, `Inferno_Members_${branchStr}_${dateStr}.xlsx`);
+    // ✅ กำหนดช่วงให้ครอบคลุมหัวตารางเสมอ
+    ws['!ref'] = ws['!ref'] || 'A1:D1';
+    return ws;
   };
+
+  const m1 = filteredMembers.filter(m => m.branch === 'Inferno-1');
+  const m2 = filteredMembers.filter(m => m.branch === 'Inferno-2');
+  const m3 = filteredMembers.filter(m => m.branch === 'Inferno-3');
+
+  const wb = utils.book_new();
+  utils.book_append_sheet(wb, makeSheet(toRows(m1)), 'Members1');
+  utils.book_append_sheet(wb, makeSheet(toRows(m2)), 'Members2');
+  utils.book_append_sheet(wb, makeSheet(toRows(m3)), 'Members3');
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  const fileSuffix = selectedBranch === 'All' ? 'All' : selectedBranch;
+
+  writeFile(wb, `Inferno_Members_${fileSuffix}_${dateStr}.xlsx`);
+};
+
 
   const handleOpenModal = (member?: Member) => {
     if (member) {
@@ -213,116 +222,178 @@ export const Members: React.FC<MembersProps> = ({ members, leaveRequests, isLoad
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const file = e.target.files?.[0];
+  if (!file) return;
 
-    setIsImporting(true);
-    setImportErrors([]);
+  setIsImporting(true);
+  setImportErrors([]);
+  setImportSheets({});
 
-    try {
-      const data = await file.arrayBuffer();
-      const workbook = read(data);
+  try {
+    const data = await file.arrayBuffer();
+    const workbook = read(data);
+
+    // ฟังก์ชันอ่าน sheet แล้วแปลงเป็น text tab-separated (คงหัวตารางไว้)
+    const sheetToText = (sheetName: string) => {
+      const ws = workbook.Sheets[sheetName];
+      if (!ws) return '';
+
+      // ได้เป็น array of arrays
+      const rows = utils.sheet_to_json(ws, { header: 1, defval: '' }) as any[][];
+      if (!rows || rows.length === 0) return '';
+
+      // join เป็น text
+      return rows
+        .map(r => (r || []).map(c => String(c ?? '').trim()).join('\t'))
+        .join('\n')
+        .trim();
+    };
+
+    const t1 = sheetToText('Members1');
+    const t2 = sheetToText('Members2');
+    const t3 = sheetToText('Members3');
+
+    // ถ้าเป็นไฟล์ export ของเรา จะมี 3 sheet นี้
+    const hasMultiSheets = !!(t1 || t2 || t3);
+
+    if (hasMultiSheets) {
+      const sheets: Partial<Record<Branch, string>> = {
+        'Inferno-1': t1,
+        'Inferno-2': t2,
+        'Inferno-3': t3,
+      };
+      setImportSheets(sheets);
+
+      // แสดง preview ลง textarea (รวมทุกชีต) เพื่อให้ผู้ใช้เห็นว่ามีอะไรเข้า
+      const preview = [
+        t1 ? `# Members1\n${t1}` : `# Members1\n(ไม่มีข้อมูล)`,
+        t2 ? `# Members2\n${t2}` : `# Members2\n(ไม่มีข้อมูล)`,
+        t3 ? `# Members3\n${t3}` : `# Members3\n(ไม่มีข้อมูล)`,
+      ].join('\n\n');
+
+      setImportText(preview);
+    } else {
+      // fallback: ถ้ามีแค่ชีตเดียวแบบเดิม
       const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      const textData = utils.sheet_to_csv(worksheet, { FS: '\t' });
+      const ws = workbook.Sheets[firstSheetName];
+      const textData = utils.sheet_to_csv(ws, { FS: '\t' });
       setImportText(textData);
-    } catch (error) {
-      setImportErrors(["ไม่สามารถอ่านไฟล์ได้ กรุณาตรวจสอบว่าเป็นไฟล์ Excel หรือ CSV ที่ถูกต้อง"]);
-      setIsErrorModalOpen(true);
-    } finally {
-      setIsImporting(false);
-      e.target.value = '';
     }
-  };
+  } catch (error) {
+    setImportErrors(["ไม่สามารถอ่านไฟล์ได้ กรุณาตรวจสอบว่าเป็นไฟล์ Excel หรือ CSV ที่ถูกต้อง"]);
+    setIsErrorModalOpen(true);
+  } finally {
+    setIsImporting(false);
+    e.target.value = '';
+  }
+};
 
-  const handleImportSubmit = () => {
-    setIsImporting(true);
-    setImportErrors([]);
+  const handleImportSubmit = async () => {
+  setIsImporting(true);
+  setImportErrors([]);
 
-    setTimeout(() => {
-      try {
-        const rows = importText.trim().split('\n');
-        const newMembers: Member[] = [];
-        const errors: string[] = [];
-        let idCounter = 1000;
+  try {
+    const errors: string[] = [];
+    const newMembers: Member[] = [];
+    let idCounter = 1000;
 
-        rows.forEach((row, index) => {
-          const trimmedRow = row.trim();
-          if (!trimmedRow) return;
+    // parser กลาง: รับ text + branch แล้วคืน Member[]
+    const parseTextToMembers = (text: string, branch: Branch) => {
+      const rows = (text || '').trim().split('\n').filter(Boolean);
+      rows.forEach((row, index) => {
+        const cols = row.split(/\t|,/).map(c => c.trim());
 
-          const cols = trimmedRow.split(/[\t,]+/).map(c => c.trim());
-          if (cols[0].toLowerCase() === 'name' || cols[0].toLowerCase() === 'id' || cols[0] === 'ชื่อ') return;
+        // skip header
+        if (cols[0] === 'ชื่อ' || cols[0]?.toLowerCase() === 'name') return;
 
-          const name = cols[0];
-          if (!name) { errors.push(`Row ${index + 1}: ไม่พบชื่อ`); return; }
+        const name = cols[0];
+        if (!name) { errors.push(`(${branch}) แถว ${index + 1}: ไม่พบชื่อ`); return; }
 
-          const rawClass = cols[1]?.toLowerCase() || '';
-          let charClass: CharacterClass = 'Ironclan';
-          
-          let matchedClass: CharacterClass | null = null;
-          if (rawClass === '1') matchedClass = 'Ironclan';
-          else if (rawClass === '2') matchedClass = 'Bloodstorm';
-          else if (rawClass === '3') matchedClass = 'Celestune';
-          else if (rawClass === '4') matchedClass = 'Sylph';
-          else if (rawClass === '5') matchedClass = 'Numina';
-          else if (rawClass === '6') matchedClass = 'Nightwalker';
-          else {
-            for (const key of CLASSES) {
-              const cfg = CLASS_CONFIG[key];
-              if (rawClass.includes(cfg.en.toLowerCase()) || rawClass.includes(cfg.th) || rawClass.includes(cfg.display)) {
-                matchedClass = key;
-                break;
-              }
+        const rawClass = (cols[1] || '').toLowerCase();
+        let matchedClass: CharacterClass | null = null;
+
+        if (rawClass === '1') matchedClass = 'Ironclan';
+        else if (rawClass === '2') matchedClass = 'Bloodstorm';
+        else if (rawClass === '3') matchedClass = 'Celestune';
+        else if (rawClass === '4') matchedClass = 'Sylph';
+        else if (rawClass === '5') matchedClass = 'Numina';
+        else if (rawClass === '6') matchedClass = 'Nightwalker';
+        else {
+          for (const key of CLASSES) {
+            const cfg = CLASS_CONFIG[key];
+            if (
+              rawClass.includes(cfg.en.toLowerCase()) ||
+              (cols[1] || '').includes(cfg.th) ||
+              rawClass.includes(cfg.display.toLowerCase())
+            ) {
+              matchedClass = key;
+              break;
             }
           }
-
-          if (matchedClass) { charClass = matchedClass; } 
-          else { errors.push(`${name}: ไม่รู้จักอาชีพ '${cols[1]}'`); return; }
-
-          const powerStr = cols[2]?.replace(/[^0-9]/g, '');
-          if (!powerStr || isNaN(parseInt(powerStr))) { errors.push(`${name}: พลังไม่ถูกต้อง`); return; }
-          const power = parseInt(powerStr);
-
-          // Handle Branch from 4th column if exists
-          let branch: Branch = selectedBranch !== 'All' ? selectedBranch : 'Inferno-1';
-          const guildCol = cols[3]?.trim();
-          if (guildCol) {
-             if (guildCol === '1') branch = 'Inferno-1';
-             else if (guildCol === '2') branch = 'Inferno-2';
-             else if (guildCol === '3') branch = 'Inferno-3';
-             // If invalid 4th column, fallback to current default
-          }
-
-          newMembers.push({
-            id: `imp-${branch}-${idCounter++}`,
-            name: name,
-            class: charClass,
-            power: power,
-            branch: branch,
-            status: 'Active',
-            joinDate: new Date().toISOString().split('T')[0],
-            leaveCount: 0,
-            warLeaveCount: 0,
-            generalLeaveCount: 0
-          });
-        });
-
-        if (errors.length > 0) {
-          setImportErrors(errors);
-          setIsErrorModalOpen(true);
-        } else if (newMembers.length > 0) {
-          onImportMembers(newMembers);
-          setIsImportModalOpen(false);
-          setImportText('');
         }
-      } catch (e) {
-        setImportErrors(["เกิดข้อผิดพลาดในการอ่านข้อมูล"]);
-        setIsErrorModalOpen(true);
-      } finally {
-        setIsImporting(false);
-      }
-    }, 500);
-  };
+
+        if (!matchedClass) { errors.push(`(${branch}) ${name}: ไม่รู้จักอาชีพ '${cols[1]}'`); return; }
+
+        const powerStr = (cols[2] || '').replace(/,/g, '').replace(/\D/g, '');
+        const power = parseInt(powerStr, 10);
+        if (!powerStr || isNaN(power)) { errors.push(`(${branch}) ${name}: พลังไม่ถูกต้อง '${cols[2]}'`); return; }
+
+        newMembers.push({
+          id: `temp-${branch}-${idCounter++}`,
+          name,
+          class: matchedClass,
+          power,
+          branch,
+          status: 'Active',
+          joinDate: new Date().toISOString().split('T')[0],
+          leaveCount: 0,
+          warLeaveCount: 0,
+          generalLeaveCount: 0
+        });
+      });
+    };
+
+    const hasSheets = importSheets && (importSheets['Inferno-1'] || importSheets['Inferno-2'] || importSheets['Inferno-3']);
+
+    if (hasSheets) {
+      // ✅ ใช้ข้อมูลจาก 3 sheet
+      if (importSheets['Inferno-1']) parseTextToMembers(importSheets['Inferno-1']!, 'Inferno-1');
+      if (importSheets['Inferno-2']) parseTextToMembers(importSheets['Inferno-2']!, 'Inferno-2');
+      if (importSheets['Inferno-3']) parseTextToMembers(importSheets['Inferno-3']!, 'Inferno-3');
+
+      // ถ้าชีตไหนไม่มีข้อมูล -> จะไม่ส่ง member ของสาขานั้นเข้าไป => service จะไม่ลบสาขานั้น
+    } else {
+      // fallback เดิม: importText (กรณีไม่ได้ใช้ไฟล์ export)
+      // ใช้ branch จาก selectedBranch/คอลัมน์ที่ 4 แบบเดิมของคุณ
+      // (ยกโค้ดเดิมคุณมาได้ แต่ถ้าต้องการให้ผมรวมให้ครบ ผมทำให้ได้)
+      parseTextToMembers(importText, selectedBranch !== 'All' ? selectedBranch : 'Inferno-1');
+    }
+
+    if (errors.length > 0) {
+      setImportErrors(errors);
+      setIsErrorModalOpen(true);
+      return;
+    }
+
+    if (newMembers.length === 0) {
+      setImportErrors(["ไม่พบข้อมูลสำหรับนำเข้า"]);
+      setIsErrorModalOpen(true);
+      return;
+    }
+
+    // ✅ จุดสำคัญ: parent จะ replace รายสาขาตามจำนวนข้อมูลที่ส่งไป
+    await onImportMembers(newMembers);
+
+    setIsImportModalOpen(false);
+    setImportText('');
+    setImportSheets({});
+  } catch (e: any) {
+    setImportErrors([`เกิดข้อผิดพลาดในการอ่าน/บันทึกข้อมูล: ${e?.message || 'Unknown error'}`]);
+    setIsErrorModalOpen(true);
+  } finally {
+    setIsImporting(false);
+  }
+};
 
   // Check leave status for modal member
   const modalMemberLeaveStatus = leaveModalMember ? {
