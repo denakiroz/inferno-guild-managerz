@@ -16,6 +16,8 @@ export interface Member {
   generalLeaveCount?: number;
   party?: number; // 20:00 Slot
   party2?: number; // 20:30 Slot (New)
+  posParty?: number;
+  posParty2?: number;
 }
 
 export interface LeaveRequest {

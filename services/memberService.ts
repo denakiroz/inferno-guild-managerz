@@ -74,7 +74,9 @@ const mapFromDB = (row: any, branch: Branch): Member => ({
   warLeaveCount: 0,
   generalLeaveCount: 0,
   party: row.party || null, // 20:00
-  party2: row.party_2 || null // 20:30
+  party2: row.party_2 || null, // 20:30
+  posParty: row.pos_party ?? null,
+  posParty2: row.pos_party_2 ?? null,
 });
 
 export const memberService = {
@@ -143,27 +145,29 @@ export const memberService = {
   },
 
   // --- UPDATE PARTY ASSIGNMENT ---
-  async updateParty(compositeId: string, partyId: number | null, timeSlot: '20:00' | '20:30' = '20:00'): Promise<void> {
-    if (!supabase) throw new Error("ไม่ได้เชื่อมต่อฐานข้อมูล");
+  async updateParty(
+  compositeId: string,
+  partyId: number | null,
+  timeSlot: '20:00' | '20:30',
+  pos: number | null
+): Promise<void> {
+  const { branch, id: dbId } = parseCompositeId(compositeId);
+  const tableName = getTableName(branch);
 
-    const { branch, id: dbId } = parseCompositeId(compositeId);
-    
-    // Check if ID is a temp import ID, if so, we can't update DB until they are real
-    if (compositeId.startsWith('imp-') || compositeId.startsWith('temp-')) {
-        console.warn("Skipping DB update for temporary ID:", compositeId);
-        return;
-    }
+  const partyCol = timeSlot === '20:30' ? 'party_2' : 'party';
+  const posCol   = timeSlot === '20:30' ? 'pos_party_2' : 'pos_party';
 
-    const tableName = getTableName(branch);
-    const column = timeSlot === '20:30' ? 'party_2' : 'party';
+  const { error } = await supabase
+    .from(tableName)
+    .update({
+      [partyCol]: partyId,
+      [posCol]: pos
+    })
+    .eq('id', dbId);
 
-    const { error } = await supabase
-      .from(tableName)
-      .update({ [column]: partyId })
-      .eq('id', dbId);
-
-    if (error) throw error;
-  },
+  if (error) throw error;
+}
+,
 
   // --- DELETE ---
   async delete(compositeId: string): Promise<void> {

@@ -434,6 +434,16 @@ const handleImportMembers = async (importedMembers: Member[]) => {
     }
   };
 
+  const reloadMembers = async () => {
+  setIsMembersLoading(true);
+  try {
+    const all = await memberService.getAll();
+    setMembers(all);
+  } finally {
+    setIsMembersLoading(false);
+  }
+};
+
   return (
     <div className="flex h-screen overflow-hidden bg-zinc-50 text-zinc-900 font-sans">
       {/* Mobile Header */}
@@ -538,6 +548,7 @@ const handleImportMembers = async (importedMembers: Member[]) => {
                    onExport={handleWarExport}
                    groupConfigs={groupConfigs}
                    onUpdateGroupConfig={handleUpdateGroupConfig}
+                   onReloadMembers={reloadMembers}
                  />
                )}
                {activeTab === 'leave' && (

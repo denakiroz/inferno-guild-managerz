@@ -13,6 +13,7 @@ interface WarBuilderProps {
   onExport: (data: Partial<WarEvent>) => void;
   groupConfigs?: PartyGroupConfig[];
   onUpdateGroupConfig?: (branch: Branch, groups: PartyGroup[]) => void;
+  onReloadMembers: () => Promise<void>;
 }
 
 // Helper to create initial 10 parties
@@ -111,7 +112,15 @@ const PartyCard: React.FC<PartyCardProps> = ({
   );
 };
 
-export const WarBuilder: React.FC<WarBuilderProps> = ({ members, leaveRequests, onExport, groupConfigs = [], onUpdateGroupConfig }) => {
+export const WarBuilder: React.FC<WarBuilderProps> = ({
+  members,
+  leaveRequests,
+  onExport,
+  groupConfigs = [],
+  onUpdateGroupConfig,
+  onReloadMembers, 
+}) => {
+
   const [selectedBranch, setSelectedBranch] = useState<Branch>('Inferno-1');
   const [warTime, setWarTime] = useState<'20:00' | '20:30'>('20:00');
   
@@ -152,37 +161,44 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({ members, leaveRequests, 
   // --- SYNC WITH DB ---
   // When members load or branch changes or TIME changes, populate slots
   useEffect(() => {
-    // 1. Load Group Config (Groups are shared across times for simplicity, or could be separate? assuming shared structure for now)
-    const savedConfig = groupConfigs.find(c => c.branch === selectedBranch);
-    if (savedConfig) {
-      setGroups(savedConfig.groups);
-    } else {
-      setGroups([]);
-    }
+  // 1) Load Group Config
+  const savedConfig = groupConfigs.find(c => c.branch === selectedBranch);
+  setGroups(savedConfig ? savedConfig.groups : []);
 
-    // 2. Populate Slots from DB Party ID based on Time Slot
-    const newParties = createInitialParties();
-    
-    // Sort members by power desc to ensure consistent filling if multiple people somehow have same party (unlikely)
-    const sortedMembers = [...members].sort((a, b) => b.power - a.power);
+  // 2) Populate Slots from DB using party + pos_party (or party_2 + pos_party_2)
+  const newParties = createInitialParties();
 
-    sortedMembers.forEach(m => {
-      // Determine which party ID to use based on time
-      const partyId = warTime === '20:00' ? m.party : m.party2;
+  // (แนะนำ) กันตัวซ้ำ: ถ้าข้อมูล DB ผิดพลาด เช่น คนเดียวถูก set ซ้ำหลายตำแหน่ง
+  const placed = new Set<string>();
 
-      // Check if member belongs to current branch and has a valid party ID (1-10)
-      if (m.branch === selectedBranch && m.status === 'Active' && partyId && partyId >= 1 && partyId <= 10) {
-        const partyIdx = partyId - 1;
-        // Find the first empty slot in that party
-        const emptySlotIdx = newParties[partyIdx].slots.findIndex(s => s.memberId === null);
-        if (emptySlotIdx !== -1) {
-           newParties[partyIdx].slots[emptySlotIdx].memberId = m.id;
-        }
-      }
-    });
+  members.forEach(m => {
+    // ใช้ field ตามรอบเวลา
+    const partyId = warTime === '20:00' ? m.party : m.party2;
+    const pos     = warTime === '20:00' ? m.posParty : m.posParty2;
 
-    setSubParties(newParties);
-  }, [selectedBranch, groupConfigs, members, warTime]); // Depend on warTime
+    // เงื่อนไขพื้นฐาน
+    if (m.branch !== selectedBranch) return;
+    if (m.status !== 'Active') return;
+
+    // ต้องมี partyId และ pos ที่ valid
+    if (!partyId || partyId < 1 || partyId > 10) return;
+    if (pos === null || pos === undefined) return;
+    if (pos < 0 || pos > 5) return;
+
+    // กันวางซ้ำ
+    if (placed.has(m.id)) return;
+
+    const partyIdx = partyId - 1;
+
+    // กันชน: ถ้ามีคนอยู่ slot นี้แล้ว ให้ “ไม่ทับ” (หรือจะเลือกทับก็ได้)
+    if (newParties[partyIdx].slots[pos].memberId) return;
+
+    newParties[partyIdx].slots[pos].memberId = m.id;
+    placed.add(m.id);
+  });
+
+  setSubParties(newParties);
+}, [selectedBranch, groupConfigs, members, warTime]);
 
   const updateGroups = (newGroups: PartyGroup[]) => {
     setGroups(newGroups);
@@ -327,30 +343,44 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({ members, leaveRequests, 
     setSaveStatus('idle');
     try {
        // 1. Map current assignments in UI
-       const assignmentMap = new Map<string, number>(); // MemberID -> PartyID
+       type AssignInfo = { party: number; pos: number };
+       const assignmentMap = new Map<string, AssignInfo>();
        subParties.forEach(p => {
-          p.slots.forEach(s => {
-             if(s.memberId) assignmentMap.set(s.memberId, p.id);
+          p.slots.forEach((s, idx) => {
+            if (s.memberId) {
+              assignmentMap.set(s.memberId, {
+                party: p.id,
+                pos: idx
+              });
+            }
           });
-       });
+        });
 
        // 2. Prepare updates for ALL members in this branch
        const branchMembersList = members.filter(m => m.branch === selectedBranch);
        
        const promises = branchMembersList.map(m => {
-          const newParty = assignmentMap.get(m.id) || null;
-          // Determine current stored party based on time
-          const currentStoredParty = warTime === '20:00' ? m.party : m.party2;
+        const info = assignmentMap.get(m.id);
 
-          // Only update if value actually changed
-          if (currentStoredParty !== newParty) {
-             return memberService.updateParty(m.id, newParty, warTime);
-          }
-          return Promise.resolve();
-       });
+        const newParty = info?.party ?? null;
+        const newPos   = info?.pos ?? null;
+
+        const currentParty = warTime === '20:00' ? m.party : m.party2;
+        const currentPos   = warTime === '20:00' ? m.posParty : m.posParty2;
+
+        if (currentParty !== newParty || currentPos !== newPos) {
+          return memberService.updateParty(
+            m.id,
+            newParty,
+            warTime,
+            newPos
+          );
+        }
+        return Promise.resolve();
+      });
        
        await Promise.all(promises);
-       
+       await onReloadMembers();
        setSaveStatus('success');
        setTimeout(() => setSaveStatus('idle'), 3000);
 
