@@ -472,20 +472,26 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
     if (onUpdateGroupConfig) onUpdateGroupConfig(selectedBranch, newGroups);
   };
 
-  // Filter Members & Sort by Power Descending (Roster)
-  const branchMembers = visibleMembers
-  .filter(m => {
-    if (m.branch !== selectedBranch || m.status !== 'Active') return false;
-    if (filterClass !== 'All' && m.class !== filterClass) return false;
-    return true;
-  })
-  .sort((a, b) => b.power - a.power);
-
   const assignedMemberIds = useMemo(() => {
     const s = new Set<string>();
     subParties.forEach(p => p.slots.forEach(sl => sl.memberId && s.add(sl.memberId)));
     return s;
   }, [subParties]);
+
+  // Filter Members & Sort by Power Descending (Roster)
+  const branchMembers = useMemo(() => {
+    return visibleMembers
+      .filter(m => {
+        if (m.branch !== selectedBranch || m.status !== 'Active') return false;
+        if (filterClass !== 'All' && m.class !== filterClass) return false;
+
+        // ✅ NEW: เอาคนที่อยู่ในปาร์ตี้แล้วออกจาก roster
+        if (assignedMemberIds.has(m.id)) return false;
+
+        return true;
+      })
+      .sort((a, b) => b.power - a.power);
+  }, [visibleMembers, selectedBranch, filterClass, assignedMemberIds]);
 
   // --- Handlers ---
   const handleResetToInitial = () => {
@@ -1341,7 +1347,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
             </div>
 
             <p className="text-[10px] text-zinc-400">
-              {branchMembers.filter(m => !assignedMemberIds.has(m.id)).length} พร้อม / {branchMembers.length} ทั้งหมด
+              {branchMembers.length} พร้อม / {activeBranchMembers().length} ทั้งหมด
             </p>
           </div>
 
