@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { LeaveRequest, Member, Branch } from '../types';
 import { Card, Button, Badge, Modal } from '../components/UI';
 import { Icons, CLASS_DATA } from '../components/Icons';
@@ -9,6 +9,13 @@ interface LeaveRequestsProps {
   requests: LeaveRequest[];
   onDeleteRequest: (id: string) => void;
 }
+
+type LeaveStat = {
+  warMonth: number;
+  personalMonth: number;
+  warAll: number;
+  personalAll: number;
+};
 
 export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests, onDeleteRequest }) => {
   const [selectedBranch, setSelectedBranch] = useState<Branch | 'All'>('All');
@@ -31,34 +38,29 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
     return `${year}-${month}-${day}`;
   };
 
-  const currentThaiDate = getThaiDate();
+  const currentThaiDate = useMemo(() => getThaiDate(), []);
+  const todayStr = useMemo(() => toISOStringDate(getThaiDate()), []);
 
-  // Helper dates (Using Thai Time)
-  const todayStr = toISOStringDate(currentThaiDate);
+  // Month key: YYYY-MM (Thai Time)
+  const monthKey = useMemo(() => {
+    const d = getThaiDate();
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }, []);
+
+  const isThisMonth = (dateStr: string) => (dateStr || '').slice(0, 7) === monthKey;
 
   // VIEWING LOGIC:
   // If Today is Saturday -> Show records for TODAY (Saturday)
   // If Today is Sun-Fri -> Show records for NEXT Saturday
-  const activeWarDateStr = (() => {
+  const activeWarDateStr = useMemo(() => {
     const d = getThaiDate();
     const day = d.getUTCDay();
     const daysToAdd = (6 - day + 7) % 7;
     d.setUTCDate(d.getUTCDate() + daysToAdd);
     return toISOStringDate(d);
-  })();
-
-  // ========= ✅ NEW: Month helpers (Thai time) =========
-  const monthKeyThai = useMemo(() => {
-    // YYYY-MM ของ "วันนี้" (Thai time)
-    const y = currentThaiDate.getUTCFullYear();
-    const m = String(currentThaiDate.getUTCMonth() + 1).padStart(2, '0');
-    return `${y}-${m}`;
-  }, [currentThaiDate]);
-
-  const isInThisMonth = (dateStr: string) => {
-    if (!dateStr) return false;
-    return dateStr.slice(0, 7) === monthKeyThai; // YYYY-MM
-  };
+  }, []);
 
   // Formatting date for header
   const formatHeaderDate = (dateStr: string) => {
@@ -69,8 +71,8 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
   // Helper to format date with Thai Day Name
   const formatDateWithDay = (dateStr: string) => {
     if (!dateStr) return '-';
-    const d = parseInt(dateStr.split('-')[2], 10);
-    const m = parseInt(dateStr.split('-')[1], 10);
+    const d = parseInt(dateStr.split('-')[2]);
+    const m = parseInt(dateStr.split('-')[1]);
 
     const tempD = new Date(dateStr);
     const days = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
@@ -99,36 +101,14 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
     }
   };
 
-  // ========= ✅ NEW: Build leave stats from requests =========
-  // นับ “ขาดลาทั้งหมด” = จำนวน request ทั้งหมดของ member (ทุกวัน/ทุกประเภท)
-  // นับ “ขาดลาประจำเดือนนี้” = จำนวน request ที่อยู่ในเดือนนี้เท่านั้น
-  const leaveStatsByMemberId = useMemo(() => {
-    const map = new Map<string, { totalAll: number; totalThisMonth: number }>();
-
-    for (const r of requests) {
-      const memberId = r.memberId;
-      const warDate = r.warDate || '';
-
-      if (!map.has(memberId)) map.set(memberId, { totalAll: 0, totalThisMonth: 0 });
-
-      const cur = map.get(memberId)!;
-      cur.totalAll += 1;
-      if (isInThisMonth(warDate)) cur.totalThisMonth += 1;
-    }
-
-    return map;
-  }, [requests, monthKeyThai]);
-
-  // Group requests by member (for table)
+  // Group requests by member (ตารางซ้าย: เดิม)
   const groupedLeaves = members
     .filter(m => selectedBranch === 'All' || m.branch === selectedBranch)
     .map(member => {
       const memberRequests = requests.filter(r => r.memberId === member.id);
 
-      // Identify War Leave (Match our Active War Date)
       const warLeave = memberRequests.find(r => r.warDate === activeWarDateStr);
 
-      // Identify Personal Leave (Match Today AND NOT War Date)
       const personalLeave = memberRequests.find(r => r.warDate === todayStr && r.warDate !== activeWarDateStr);
 
       return {
@@ -140,36 +120,115 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
     })
     .filter(item => item.hasLeave);
 
-  // ========= ✅ NEW: High absence list sources =========
-  const branchFilteredMembers = useMemo(() => {
-    return members.filter(m => selectedBranch === 'All' || m.branch === selectedBranch);
-  }, [members, selectedBranch]);
+  // ===== ✅ สถิติ (แยก ลาวอ/ลากิจ + เดือนนี้/ทั้งหมด) =====
+  const statsByMember = useMemo(() => {
+    const map = new Map<string, LeaveStat>();
 
-  const monthAbsenceTop10 = useMemo(() => {
-    return branchFilteredMembers
-      .map(m => ({
-        ...m,
-        monthCount: leaveStatsByMemberId.get(m.id)?.totalThisMonth || 0
-      }))
-      .filter(m => (m.monthCount || 0) >= 1)
-      .sort((a, b) => (b.monthCount || 0) - (a.monthCount || 0))
-      .slice(0, 10);
-  }, [branchFilteredMembers, leaveStatsByMemberId]);
+    const ensure = (memberId: string) => {
+      if (!map.has(memberId)) {
+        map.set(memberId, { warMonth: 0, personalMonth: 0, warAll: 0, personalAll: 0 });
+      }
+      return map.get(memberId)!;
+    };
 
-  const totalAbsenceTop10 = useMemo(() => {
-    return branchFilteredMembers
-      .map(m => ({
-        ...m,
-        totalCount: leaveStatsByMemberId.get(m.id)?.totalAll || 0
-      }))
-      .filter(m => (m.totalCount || 0) >= 1)
-      .sort((a, b) => (b.totalCount || 0) - (a.totalCount || 0))
-      .slice(0, 10);
-  }, [branchFilteredMembers, leaveStatsByMemberId]);
+    requests.forEach(r => {
+      const stat = ensure(r.memberId);
+      const d = new Date(r.warDate);
+      const isWar = d.getUTCDay() === 6; // เสาร์ = ลาวอ
+      const inMonth = isThisMonth(r.warDate);
+
+      if (isWar) {
+        stat.warAll += 1;
+        if (inMonth) stat.warMonth += 1;
+      } else {
+        stat.personalAll += 1;
+        if (inMonth) stat.personalMonth += 1;
+      }
+    });
+
+    return map;
+  }, [requests, monthKey]);
+
+  const branchMembers = useMemo(
+    () => members.filter(m => selectedBranch === 'All' || m.branch === selectedBranch),
+    [members, selectedBranch]
+  );
+
+  const topList = useCallback(
+    (key: keyof LeaveStat, limit = 10) => {
+      return branchMembers
+        .map(m => ({
+          ...m,
+          count: statsByMember.get(m.id)?.[key] || 0
+        }))
+        .filter(m => m.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
+    },
+    [branchMembers, statsByMember]
+  );
+
+  // (ไม่ใช้ useCallback import เดิมไม่ได้มี) -> ทำเป็น useMemo wrapper ให้ UI ไม่เพี้ยน
+  const topWarMonth = useMemo(() => topList('warMonth', 10), [topList]);
+  const topPersonalMonth = useMemo(() => topList('personalMonth', 10), [topList]);
+  const topWarAll = useMemo(() => topList('warAll', 10), [topList]);
+  const topPersonalAll = useMemo(() => topList('personalAll', 10), [topList]);
+
+  const renderTopBox = (
+    title: string,
+    subtitle: string,
+    items: Array<Member & { count: number }>,
+    badgeColor: 'red' | 'yellow' | 'ิblue'
+  ) => {
+    const emptyText =
+      badgeColor === 'red'
+        ? 'ไม่มีสมาชิกที่มีประวัติลาวอ'
+        : badgeColor === 'yellow'
+        ? 'ไม่มีสมาชิกที่มีประวัติลากิจ'
+        : 'ไม่มีข้อมูล';
+
+    return (
+      <Card>
+        <h3 className="font-bold text-zinc-900 mb-1 flex items-center gap-2">
+          <Icons.Alert className={`w-5 h-5 ${badgeColor === 'red' ? 'text-red-500' : badgeColor === 'yellow' ? 'text-amber-500' : 'text-zinc-500'}`} />
+          {title} ({selectedBranch === 'All' ? 'ทุกสาขา' : selectedBranch})
+        </h3>
+        <p className="text-xs text-zinc-500 mb-3">{subtitle}</p>
+
+        <div className="space-y-3">
+          {items.map(m => (
+            <div
+              key={m.id}
+              className={`flex justify-between items-center p-2 rounded border ${
+                badgeColor === 'red'
+                  ? 'bg-red-50 border-red-100'
+                  : badgeColor === 'yellow'
+                  ? 'bg-amber-50 border-amber-100'
+                  : 'bg-zinc-50 border-zinc-200'
+              }`}
+            >
+              <span className={`text-sm font-medium ${badgeColor === 'red' ? 'text-red-900' : badgeColor === 'yellow' ? 'text-amber-900' : 'text-zinc-900'}`}>
+                {m.name}
+              </span>
+              {badgeColor === 'red' ? (
+                <Badge color="red">{m.count} ครั้ง</Badge>
+              ) : badgeColor === 'yellow' ? (
+                <Badge color="blue">{m.count} ครั้ง</Badge>
+              ) : (
+                <Badge>{m.count} ครั้ง</Badge>
+              )}
+            </div>
+          ))}
+
+          {items.length === 0 && <p className="text-sm text-zinc-400">{emptyText}</p>}
+        </div>
+      </Card>
+    );
+  };
 
   return (
     <div className="space-y-6">
-      {/* Header Info */}
+      {/* Header Info (เดิม) */}
       <Card className="flex flex-col md:flex-row justify-between items-center gap-4 bg-gradient-to-r from-zinc-50 to-white">
         <div>
           <h2 className="text-xl font-bold text-zinc-900 rpg-font">จัดการการลา</h2>
@@ -182,6 +241,7 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
 
       {/* Filters & Content */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* ตารางซ้าย (เดิม) */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex gap-2 mb-2 overflow-x-auto pb-1 hide-scrollbar">
             <Button size="sm" variant={selectedBranch === 'All' ? 'primary' : 'outline'} onClick={() => setSelectedBranch('All')}>
@@ -212,6 +272,7 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
                       </td>
                     </tr>
                   )}
+
                   {groupedLeaves.map(({ member, personalLeave, warLeave }) => (
                     <tr key={member.id} className="bg-white border-b border-zinc-100 hover:bg-zinc-50">
                       {/* Member Info */}
@@ -223,9 +284,7 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
                           <div>
                             <div className="font-medium text-zinc-900">{member.name}</div>
                             <div className="text-xs text-zinc-400 font-normal mt-0.5">
-                              <span className="bg-zinc-100 text-zinc-600 px-1.5 py-0.5 rounded mr-2 border border-zinc-200">
-                                {member.branch}
-                              </span>
+                              <span className="bg-zinc-100 text-zinc-600 px-1.5 py-0.5 rounded mr-2 border border-zinc-200">{member.branch}</span>
                               <span className="font-mono">Total: {member.leaveCount}</span>
                             </div>
                           </div>
@@ -289,49 +348,39 @@ export const LeaveRequests: React.FC<LeaveRequestsProps> = ({ members, requests,
           </Card>
         </div>
 
-        {/* Right Panel */}
+        {/* ฝั่งขวา: ✅ 4 กล่อง (คงโทน UI เดิม) */}
         <div className="space-y-4">
-          {/* ✅ NEW: Monthly absence */}
-          <Card>
-            <h3 className="font-bold text-zinc-900 mb-4 flex items-center gap-2">
-              <Icons.Alert className="w-5 h-5 text-amber-500" /> ขาดลาประจำเดือนนี้ ({selectedBranch === 'All' ? 'ทุกสาขา' : selectedBranch})
-            </h3>
-            <p className="text-xs text-zinc-500 mb-3">
-              *นับเฉพาะรายการลาในเดือน <span className="font-bold">{monthKeyThai}</span>
-            </p>
+          {renderTopBox(
+            'ลาวอ (เดือนนี้)',
+            `*นับเฉพาะเดือน ${monthKey} (วันเสาร์)`,
+            topWarMonth as any,
+            'red'
+          )}
 
-            <div className="space-y-3">
-              {monthAbsenceTop10.map(m => (
-                <div key={m.id} className="flex justify-between items-center p-2 bg-amber-50 rounded border border-amber-100">
-                  <span className="text-sm font-medium text-amber-900">{m.name}</span>
-                  <Badge color="blue">{(m as any).monthCount} ครั้ง</Badge>
-                </div>
-              ))}
-              {monthAbsenceTop10.length === 0 && <p className="text-sm text-zinc-400">ไม่มีข้อมูลขาดลาประจำเดือนนี้</p>}
-            </div>
-          </Card>
+          {renderTopBox(
+            'ลากิจ (เดือนนี้)',
+            `*นับเฉพาะเดือน ${monthKey} (ไม่ใช่วันเสาร์)`,
+            topPersonalMonth as any,
+            'yellow'
+          )}
 
-          {/* ✅ Rename + change meaning: Total absence */}
-          <Card>
-            <h3 className="font-bold text-zinc-900 mb-4 flex items-center gap-2">
-              <Icons.Alert className="w-5 h-5 text-red-500" /> ขาดลาทั้งหมด ({selectedBranch === 'All' ? 'ทุกสาขา' : selectedBranch})
-            </h3>
-            <p className="text-xs text-zinc-500 mb-3">*นับจำนวนรายการลา “ทั้งหมด” (ลากิจ + ลาวอ) ตามข้อมูลในระบบ</p>
+          {renderTopBox(
+            'ลาวอทั้งหมด',
+            '*นับทั้งหมด (วันเสาร์)',
+            topWarAll as any,
+            'red'
+          )}
 
-            <div className="space-y-3">
-              {totalAbsenceTop10.map(m => (
-                <div key={m.id} className="flex justify-between items-center p-2 bg-red-50 rounded border border-red-100">
-                  <span className="text-sm font-medium text-red-900">{m.name}</span>
-                  <Badge color="red">{(m as any).totalCount} ครั้ง</Badge>
-                </div>
-              ))}
-              {totalAbsenceTop10.length === 0 && <p className="text-sm text-zinc-400">ไม่มีสมาชิกที่มีประวัติขาดลา</p>}
-            </div>
-          </Card>
+          {renderTopBox(
+            'ลากิจทั้งหมด',
+            '*นับทั้งหมด (ไม่ใช่วันเสาร์)',
+            topPersonalAll as any,
+            'yellow'
+          )}
         </div>
       </div>
 
-      {/* Confirmation Modal */}
+      {/* Confirmation Modal (เดิม) */}
       <Modal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} title="ยืนยันการลบข้อมูล" size="sm">
         <div className="space-y-4">
           <div className="flex flex-col items-center justify-center p-4 text-center">
