@@ -8,15 +8,12 @@ const mapClassFromDB = (dbClass: string): CharacterClass => {
 
   const normalized = dbClass.trim();
 
-  // 1. Try to find match in Thai names from constants
   const foundKey = CLASSES.find(key => CLASS_CONFIG[key].th === normalized);
   if (foundKey) return foundKey;
 
-  // 2. Try English match
   const foundKeyEn = CLASSES.find(key => CLASS_CONFIG[key].en.toLowerCase() === normalized.toLowerCase());
   if (foundKeyEn) return foundKeyEn;
 
-  // 3. Fallback logic for variations
   if (normalized.includes('บลัด')) return 'Bloodstorm';
   if (normalized.includes('ไอรอน')) return 'Ironclan';
   if (normalized.includes('เซเลส')) return 'Celestune';
@@ -37,7 +34,8 @@ const mapToDB = (member: Partial<Member>) => {
     party_2: member.party2,
     pos_party: member.posParty,
     pos_party_2: member.posParty2,
-    color: member.color ?? null
+    color: member.color ?? null,
+    is_special: member.isSpecial ?? false, // ✅ NEW
   };
 };
 
@@ -79,7 +77,8 @@ const mapFromDB = (row: any, branch: Branch): Member => ({
   party2: row.party_2 || null, // 20:30
   posParty: row.pos_party ?? null,
   posParty2: row.pos_party_2 ?? null,
-  color: (row.color ?? null) as MemberColor | null
+  color: (row.color ?? null) as MemberColor | null,
+  isSpecial: !!row.is_special, // ✅ NEW
 });
 
 const getMemberTableByBranch = (branch: Branch) => {
@@ -89,7 +88,6 @@ const getMemberTableByBranch = (branch: Branch) => {
 };
 
 export const memberService = {
-  // --- FETCH ALL ---
   async getAll(): Promise<Member[]> {
     if (!supabase) throw new Error('ไม่พบการตั้งค่าฐานข้อมูล');
 
@@ -111,7 +109,6 @@ export const memberService = {
     }
   },
 
-  // --- CREATE ---
   async create(member: Member): Promise<Member> {
     if (!supabase) throw new Error('ไม่ได้เชื่อมต่อฐานข้อมูล');
 
@@ -119,12 +116,11 @@ export const memberService = {
     const payload = mapToDB(member);
 
     const { data, error } = await supabase.from(tableName).insert([payload]).select().single();
-
     if (error) throw error;
+
     return mapFromDB(data, member.branch);
   },
 
-  // --- UPDATE ---
   async update(member: Member): Promise<Member> {
     if (!supabase) throw new Error('ไม่ได้เชื่อมต่อฐานข้อมูล');
 
@@ -134,12 +130,11 @@ export const memberService = {
     const payload = mapToDB(member);
 
     const { data, error } = await supabase.from(tableName).update(payload).eq('id', dbId).select().single();
-
     if (error) throw error;
+
     return mapFromDB(data, branch);
   },
 
-  // --- UPDATE PARTY ASSIGNMENT ---
   async updateParty(
     compositeId: string,
     partyId: number | null,
@@ -165,7 +160,6 @@ export const memberService = {
     if (error) throw error;
   },
 
-  // --- UPDATE COLOR (single) ---
   async updateColor(branch: Branch, memberId: string, color: MemberColor | null) {
     if (!supabase) throw new Error('ไม่ได้เชื่อมต่อฐานข้อมูล');
 
@@ -174,12 +168,10 @@ export const memberService = {
     if (error) throw error;
   },
 
-  // ✅ UPDATE COLOR (many) รองรับหลายคน / ข้าม branch ได้
   async updateColorMany(compositeIds: string[], color: MemberColor | null): Promise<void> {
     if (!supabase) throw new Error('ไม่ได้เชื่อมต่อฐานข้อมูล');
     if (!compositeIds || compositeIds.length === 0) return;
 
-    // group by branch
     const grouped: Record<string, string[]> = {};
     compositeIds.forEach(cid => {
       const { branch, id } = parseCompositeId(cid);
@@ -207,7 +199,6 @@ export const memberService = {
     }
   },
 
-  // --- DELETE ---
   async delete(compositeId: string): Promise<void> {
     if (!supabase) throw new Error('ไม่ได้เชื่อมต่อฐานข้อมูล');
 
@@ -215,7 +206,6 @@ export const memberService = {
     const tableName = getTableName(branch);
 
     const { error } = await supabase.from(tableName).delete().eq('id', dbId);
-
     if (error) throw error;
   },
 

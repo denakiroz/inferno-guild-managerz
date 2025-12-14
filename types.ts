@@ -21,6 +21,7 @@ export interface Member {
   posParty?: number;
   posParty2?: number;
   color?: MemberColor;
+  isSpecial?: boolean;
 }
 
 export interface LeaveRequest {

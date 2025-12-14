@@ -220,6 +220,43 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
     return '#111827';
   };
 
+  const isSpecialMember = (m: Member) => !!(m as any).isSpecial;
+
+  // สมาชิกที่อนุญาตให้ใช้ในหน้าจัดทัพนี้เท่านั้น
+  const visibleMembers = useMemo(
+    () => members.filter(m => !isSpecialMember(m)),
+    [members]
+  );
+
+  useEffect(() => {
+    const specialIds = new Set(
+      members.filter(m => (m as any).isSpecial).map(m => m.id)
+    );
+
+    if (specialIds.size === 0) return;
+
+    // ดีดออกจากปาร์ตี้
+    setSubParties(prev =>
+      prev.map(p => ({
+        ...p,
+        slots: p.slots.map(s =>
+          s.memberId && specialIds.has(s.memberId)
+            ? { ...s, memberId: null }
+            : s
+        )
+      }))
+    );
+
+    // ยกเลิกการเลือก
+    setSelectedMemberIds(prev => {
+      const next = new Set<string>();
+      prev.forEach(id => {
+        if (!specialIds.has(id)) next.add(id);
+      });
+      return next;
+    });
+  }, [members]);
+
   // ----- Thai Time Helpers (UTC+7) -----
   const getThaiDate = () => {
     const d = new Date();
@@ -352,7 +389,7 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
       const newParties = createInitialParties();
       const placed = new Set<string>();
 
-      members.forEach(m => {
+      visibleMembers.forEach(m => {
         const partyId = time === '20:00' ? m.party : m.party2;
         const pos = time === '20:00' ? m.posParty : m.posParty2;
 
@@ -372,12 +409,15 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
 
       return newParties;
     },
-    [members]
+    [visibleMembers]
   );
 
   const activeBranchMembers = useCallback(() => {
-    return members.filter(m => m.branch === selectedBranch && m.status === 'Active');
-  }, [members, selectedBranch]);
+    return visibleMembers.filter(
+      m => m.branch === selectedBranch && m.status === 'Active'
+    );
+  }, [visibleMembers, selectedBranch]);
+
 
   /**
    * ✅ กฎการ “จัดเข้า/ย้าย/ลากเข้า” ตาม requirement ล่าสุด
@@ -433,13 +473,13 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
   };
 
   // Filter Members & Sort by Power Descending (Roster)
-  const branchMembers = members
-    .filter(m => {
-      if (m.branch !== selectedBranch || m.status !== 'Active') return false;
-      if (filterClass !== 'All' && m.class !== filterClass) return false;
-      return true;
-    })
-    .sort((a, b) => b.power - a.power);
+  const branchMembers = visibleMembers
+  .filter(m => {
+    if (m.branch !== selectedBranch || m.status !== 'Active') return false;
+    if (filterClass !== 'All' && m.class !== filterClass) return false;
+    return true;
+  })
+  .sort((a, b) => b.power - a.power);
 
   const assignedMemberIds = useMemo(() => {
     const s = new Set<string>();
@@ -764,7 +804,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
 
       let slotsHtml = '';
       party.slots.forEach(slot => {
-        const m = members.find(mem => mem.id === slot.memberId);
+        const m = visibleMembers.find(mem => mem.id === slot.memberId);
 
         if (m && shouldHidePersonalInTemp(m)) {
           slotsHtml += `
@@ -1418,7 +1458,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
                         key={party.id}
                         party={party}
                         onSlotClick={handleSlotClick}
-                        members={members}
+                        members={visibleMembers}
                         selectedMemberIds={selectedMemberIds}
                         onToggleSelectMember={toggleSelectedMember}
                         onDragStart={handleDragStart}
@@ -1455,7 +1495,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
                       key={party.id}
                       party={party}
                       onSlotClick={handleSlotClick}
-                      members={members}
+                      members={visibleMembers}
                       selectedMemberIds={selectedMemberIds}
                       onToggleSelectMember={toggleSelectedMember}
                       onDragStart={handleDragStart}
