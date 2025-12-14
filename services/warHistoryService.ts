@@ -1,4 +1,3 @@
-
 import { supabase } from '../lib/supabaseClient';
 import { WarEvent, Branch, WarResult, SubParty } from '../types';
 
@@ -6,7 +5,7 @@ const getTableName = (branch: Branch) => {
   switch (branch) {
     case 'Inferno-2': return 'war_history_2';
     case 'Inferno-3': return 'war_history_3';
-    case 'Inferno-1': 
+    case 'Inferno-1':
     default: return 'war_history_1';
   }
 };
@@ -22,10 +21,11 @@ const mapFromDB = (row: any, branch: Branch): WarEvent => {
   return {
     id: `${branch}:${row.id}`,
     date: row.date,
-    branch: branch,
+    branch,
     subParties: row.party_snapshot || [],
-    groups: [], // Legacy field, not stored in history anymore
-    result: result
+    groups: [],
+    result,
+    snapshotLeaves: row.leave_snapshot || [], // ✅ สำคัญ: อ่าน leave_snapshot
   };
 };
 
@@ -45,7 +45,7 @@ export const warHistoryService = {
         console.error(`Error fetching ${table}:`, error);
         return [];
       }
-      return (data || []).map(row => mapFromDB(row, branch));
+      return (data || []).map((row: any) => mapFromDB(row, branch));
     };
 
     const [h1, h2, h3] = await Promise.all([
@@ -54,17 +54,24 @@ export const warHistoryService = {
       fetchTable('Inferno-3')
     ]);
 
-    // Combine and sort by date descending
-    return [...h1, ...h2, ...h3].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return [...h1, ...h2, ...h3].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
   },
 
   // --- CREATE ---
-  async create(branch: Branch, date: string, snapshotParties: SubParty[]): Promise<WarEvent> {
+  async create(
+    branch: Branch,
+    date: string, // ✅ รองรับ timestamp เช่น "2025-12-20T20:00:00"
+    snapshotParties: SubParty[],
+    snapshotLeaves: any[] = [] // ✅ เก็บ leave_snapshot เป็น jsonb
+  ): Promise<WarEvent> {
     const table = getTableName(branch);
-    
+
     const payload = {
-      date: date,
+      date,
       party_snapshot: snapshotParties,
+      leave_snapshot: snapshotLeaves, // ✅ สำคัญ
       opponent: '',
       outcome: 'Victory',
       our_score: 0,
@@ -84,7 +91,9 @@ export const warHistoryService = {
   // --- UPDATE RESULT ---
   async updateResult(compositeId: string, result: WarResult): Promise<void> {
     const parts = compositeId.split(':');
-    const branch = (parts.length === 2 && parts[0].startsWith('Inferno')) ? parts[0] as Branch : 'Inferno-1';
+    const branch = (parts.length === 2 && parts[0].startsWith('Inferno'))
+      ? parts[0] as Branch
+      : 'Inferno-1';
     const dbId = parseInt(parts[1], 10);
     const table = getTableName(branch);
 
@@ -106,7 +115,9 @@ export const warHistoryService = {
   // --- DELETE ---
   async delete(compositeId: string): Promise<void> {
     const parts = compositeId.split(':');
-    const branch = (parts.length === 2 && parts[0].startsWith('Inferno')) ? parts[0] as Branch : 'Inferno-1';
+    const branch = (parts.length === 2 && parts[0].startsWith('Inferno'))
+      ? parts[0] as Branch
+      : 'Inferno-1';
     const dbId = parseInt(parts[1], 10);
     const table = getTableName(branch);
 

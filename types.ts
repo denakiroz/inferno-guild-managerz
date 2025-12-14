@@ -88,7 +88,7 @@ export interface WarEvent {
   subParties: SubParty[];
   groups: PartyGroup[];
   result?: WarResult;
-  snapshotLeaves?: { memberId: string; name: string; reason: string }[];
+  snapshotLeaves?: Array<{memberId: string;name: string;class?: CharacterClass;power?: number;branch?: Branch;leaveType: 'War' | 'Personal';session?: '20:00' | '20:30';warDate?: string;}>;
   snapshotReserves?: { memberId: string; name: string; power: number; class: CharacterClass }[];
 }
 
