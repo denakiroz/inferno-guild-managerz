@@ -72,6 +72,7 @@ interface PartyCardProps {
   /** ✅ โหมดชั่วคราว/ปกติ + เงื่อนไข “จัดเข้าได้ไหม” */
   isTempMode: boolean;
   canPlaceMemberId: (memberId: string) => boolean;
+  warLeaveSet: Set<string>;   
 }
 
 export const PartyCard: React.FC<PartyCardProps> = ({
@@ -90,7 +91,8 @@ export const PartyCard: React.FC<PartyCardProps> = ({
   headerStyle,
   groupName,
   isTempMode,
-  canPlaceMemberId
+  canPlaceMemberId,
+  warLeaveSet
 }) => {
   return (
     <div className="rounded-lg border bg-white shadow-sm overflow-hidden">
@@ -105,6 +107,7 @@ export const PartyCard: React.FC<PartyCardProps> = ({
       <div className="p-2 space-y-1">
         {party.slots.map((slot, idx) => {
           const member = slot.memberId ? members.find(m => m.id === slot.memberId) : null;
+          const isWarLeave = !!member && warLeaveSet.has(member.id);
 
           const isSelected = !!member && selectedMemberIds.has(member.id);
           const isDragTarget = dragOverTarget?.partyId === party.id && dragOverTarget?.index === idx;
@@ -131,6 +134,7 @@ export const PartyCard: React.FC<PartyCardProps> = ({
                 ${member ? (memberMovable ? 'cursor-grab active:cursor-grabbing' : 'cursor-not-allowed opacity-75') : ''}
                 ${isDragTarget ? 'ring-2 ring-red-300 bg-red-50' : 'border-zinc-100'}
                 ${isSelected ? 'bg-red-50 border-red-300' : 'bg-white'}
+                ${isWarLeave ? 'bg-red-200 border-red-500 ring-2 ring-red-300 shadow-sm' : ''}
               `}
               onDragOver={e => onDragOver(e, party.id, idx)}
               onDrop={e => onDrop(e, party.id, idx)}
@@ -492,6 +496,10 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
       })
       .sort((a, b) => b.power - a.power);
   }, [visibleMembers, selectedBranch, filterClass, assignedMemberIds]);
+
+  const rosterMembers = useMemo(() => {
+   return branchMembers.filter(m => !assignedMemberIds.has(m.id));
+  }, [branchMembers, assignedMemberIds]);
 
   // --- Handlers ---
   const handleResetToInitial = () => {
@@ -1358,7 +1366,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
               </div>
             )}
 
-            {branchMembers.map(m => {
+           {rosterMembers.map(m => {
               const isSelected = selectedMemberIds.has(m.id);
 
               // แสดง badge ตามเงื่อนไข leave
@@ -1387,6 +1395,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
                     ${moveBlocked ? 'bg-zinc-50 border-transparent opacity-80' : 'bg-white border-transparent hover:bg-zinc-50 hover:border-zinc-200'}
                     ${isSelected ? 'bg-red-50 border-red-300 ring-1 ring-red-300' : ''}
                     ${isDragging ? 'opacity-50 ring-2 ring-red-200 bg-red-50' : ''}
+                    ${(!isTempMode && isWarLeave) ? 'bg-red-50 border-red-200' : ''}
                   `}
                   title={moveBlocked ? 'สมาชิกคนนี้ถูกล็อคการจัดตำแหน่งในโหมดปัจจุบัน' : undefined}
                 >
@@ -1478,6 +1487,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
                         onRemoveFromParty={removeFromParty}
                         isTempMode={isTempMode}
                         canPlaceMemberId={canPlaceMemberId}
+                        warLeaveSet={warLeaveSet}
                       />
                     ) : null;
                   })}
@@ -1513,6 +1523,7 @@ const buildVisualizerHtml = (mode: VisualMode) => {
                       onRemoveFromParty={removeFromParty}
                       isTempMode={isTempMode}
                       canPlaceMemberId={canPlaceMemberId}
+                      warLeaveSet={warLeaveSet}
                     />
                   ))}
               </div>
