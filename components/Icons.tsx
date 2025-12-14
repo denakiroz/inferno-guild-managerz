@@ -4,7 +4,10 @@ import {
   Sword, Shield, Zap, Heart, Crosshair, 
   Users, Calendar, Activity, Home, Menu, 
   ChevronRight, LogOut, CheckCircle, XCircle, AlertTriangle, Share2, Coffee,
-  Filter, X, Trophy, Skull, Trash2, Map, Plus, Image
+  Filter, X, Trophy, Skull, Trash2, Map, Plus, Image,
+  Pen,
+  Redo,
+  ClipboardCopy
 } from 'lucide-react';
 import { CharacterClass } from '../types';
 
@@ -77,6 +80,8 @@ export const Icons = {
   Trash: Trash2,
   Map,
   Plus,
-  Edit: Trash2, // fa-pen-to-square equivalent
-  Image
+  Edit: Pen, // fa-pen-to-square equivalent
+  Image,
+  Redo : Redo,
+  ClipboardCopy : ClipboardCopy
 };

@@ -3,6 +3,8 @@ export type Branch = 'Inferno-1' | 'Inferno-2' | 'Inferno-3';
 
 export type CharacterClass = 'Ironclan' | 'Bloodstorm' | 'Celestune' | 'Sylph' | 'Numina' | 'Nightwalker';
 
+export type MemberColor = 'red' | 'purple' | 'blue' | null;
+
 export interface Member {
   id: string;
   name: string;
@@ -18,6 +20,7 @@ export interface Member {
   party2?: number; // 20:30 Slot (New)
   posParty?: number;
   posParty2?: number;
+  color?: MemberColor;
 }
 
 export interface LeaveRequest {
