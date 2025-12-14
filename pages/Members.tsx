@@ -35,6 +35,10 @@ export const Members: React.FC<MembersProps> = ({
   // ✅ NEW: Special filter (ศิษย์เอก / ไม่ใช่ / ทั้งหมด)
   const [filterSpecial, setFilterSpecial] = useState<'All' | 'Special' | 'Normal'>('All');
 
+  // ✅ NEW: Power Range Filter (min/max)
+  const [powerMin, setPowerMin] = useState<number | ''>('');
+  const [powerMax, setPowerMax] = useState<number | ''>('');
+
   // Modals
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -118,13 +122,19 @@ export const Members: React.FC<MembersProps> = ({
       (filterSpecial === 'Special' && !!m.isSpecial) ||
       (filterSpecial === 'Normal' && !m.isSpecial);
 
-    return matchBranch && matchSearch && matchClass && matchSpecial;
+    // ✅ NEW: Power Range
+    const matchPowerMin = powerMin === '' || m.power >= powerMin;
+    const matchPowerMax = powerMax === '' || m.power <= powerMax;
+
+    return matchBranch && matchSearch && matchClass && matchSpecial && matchPowerMin && matchPowerMax;
   });
 
   const clearFilters = () => {
     setSearchTerm('');
     setFilterClass('All');
     setFilterSpecial('All'); // ✅ NEW
+    setPowerMin(''); // ✅ NEW
+    setPowerMax(''); // ✅ NEW
   };
 
   const handleExport = () => {
@@ -436,7 +446,8 @@ export const Members: React.FC<MembersProps> = ({
 
         <div className="p-4 bg-zinc-50/80 rounded-b-lg">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-3 items-center">
-            <div className="lg:col-span-5 relative group">
+            {/* Search */}
+            <div className="lg:col-span-4 relative group">
               <Icons.Crosshair className="absolute left-3 top-2.5 w-4 h-4 text-zinc-400 group-focus-within:text-red-500 transition-colors" />
               <Input
                 placeholder="ค้นหาชื่อ..."
@@ -446,8 +457,8 @@ export const Members: React.FC<MembersProps> = ({
               />
             </div>
 
-            {/* ✅ ปรับ col-span เพื่อให้ใส่ filter ศิษย์เอกได้ */}
-            <div className="lg:col-span-3">
+            {/* Class */}
+            <div className="lg:col-span-2">
               <Select
                 value={filterClass}
                 onChange={e => setFilterClass(e.target.value as CharacterClass | 'All')}
@@ -460,7 +471,7 @@ export const Members: React.FC<MembersProps> = ({
               </Select>
             </div>
 
-            {/* ✅ NEW: Filter ศิษย์เอก */}
+            {/* ✅ Special */}
             <div className="lg:col-span-2">
               <Select
                 value={filterSpecial}
@@ -473,8 +484,42 @@ export const Members: React.FC<MembersProps> = ({
               </Select>
             </div>
 
-            <div className="lg:col-span-2 flex justify-end">
-              <Button variant="ghost" size="sm" onClick={clearFilters} className="w-full md:w-auto h-10 border border-zinc-200 bg-white hover:bg-zinc-100 text-zinc-500">
+            {/* ✅ Power Min */}
+            <div className="lg:col-span-2">
+              <Input
+                type="number"
+                placeholder="พลังมากกว่า"
+                className="w-full bg-white shadow-sm border-zinc-300 text-sm"
+                value={powerMin === '' ? '' : String(powerMin)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPowerMin(v === '' ? '' : Number(v));
+                }}
+              />
+            </div>
+
+            {/* ✅ Power Max */}
+            <div className="lg:col-span-2">
+              <Input
+                type="number"
+                placeholder="พลังน้อยกว่า"
+                className="w-full bg-white shadow-sm border-zinc-300 text-sm"
+                value={powerMax === '' ? '' : String(powerMax)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPowerMax(v === '' ? '' : Number(v));
+                }}
+              />
+            </div>
+
+            {/* Clear Filters (new row on lg for layout cleanliness) */}
+            <div className="lg:col-span-12 flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                className="w-full md:w-auto h-10 border border-zinc-200 bg-white hover:bg-zinc-100 text-zinc-500"
+              >
                 <Icons.X className="w-4 h-4 mr-1" /> ล้างตัวกรอง
               </Button>
             </div>
