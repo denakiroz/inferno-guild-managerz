@@ -299,6 +299,9 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
 
   const [filterClass, setFilterClass] = useState<CharacterClass | 'All'>('All');
 
+  // ✅ Clear tool: เลือกอาชีพเพื่อเคลียร์คนออกจากปาร์ตี้กลับเข้า roster
+  const [clearClass, setClearClass] = useState<CharacterClass | 'All'>('All');
+
   // Builder State
   const [subParties, setSubParties] = useState<SubParty[]>(createInitialParties());
   const [groups, setGroups] = useState<PartyGroup[]>([]);
@@ -501,6 +504,41 @@ export const WarBuilder: React.FC<WarBuilderProps> = ({
    return branchMembers.filter(m => !assignedMemberIds.has(m.id));
   }, [branchMembers, assignedMemberIds]);
 
+  // ✅ เคลียร์สมาชิกออกจากปาร์ตี้ -> กลับเข้า roster (ตามอาชีพที่เลือก)
+  const handleClearFromParties = useCallback(() => {
+    // ทำงานกับ subParties บนหน้าปัจจุบันเท่านั้น (ตาม branch + warTime ที่เลือก)
+    const next = subParties.map(p => ({ ...p, slots: p.slots.map(s => ({ ...s })) }));
+    const removedIds: string[] = [];
+
+    next.forEach(p => {
+      p.slots.forEach((s, idx) => {
+        if (!s.memberId) return;
+
+        const mem = visibleMembers.find(m => m.id === s.memberId);
+        if (!mem) return;
+
+        if (clearClass !== 'All' && mem.class !== clearClass) return;
+
+        removedIds.push(s.memberId);
+        p.slots[idx] = { ...s, memberId: null };
+      });
+    });
+
+    if (removedIds.length === 0) return;
+
+    setSubParties(next);
+
+    // กัน selected ค้าง
+    setSelectedMemberIds(prev => {
+      const ns = new Set(prev);
+      removedIds.forEach(id => ns.delete(id));
+      return ns;
+    });
+
+    // reset drag target
+    setDragItem(null);
+    setDragOverTarget(null);
+  }, [subParties, visibleMembers, clearClass]);
   // --- Handlers ---
   const handleResetToInitial = () => {
     setSubParties(cloneParties(initialSnapshotRef.current));
@@ -1264,17 +1302,39 @@ const buildVisualizerHtml = (mode: VisualMode) => {
           onDrop={handleDropOnRoster}
         >
           <div className="p-4 border-b border-zinc-50">
+                       {/* ✅ Clear tool */}
+            <div className="mt-3 p-3 bg-zinc-50 rounded border border-zinc-200">
+              <div className="text-[10px] font-bold text-zinc-500 uppercase mb-2">เคลียร์สมาชิกออกจากปาร์ตี้</div>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={clearClass}
+                  onChange={e => setClearClass(e.target.value as any)}
+                  className="flex-1 text-xs font-bold"
+                >
+                  <option value="All">ทุกอาชีพ</option>
+                  {CLASSES.map(cls => (
+                    <option key={cls} value={cls}>
+                      {CLASS_CONFIG[cls].th}
+                    </option>
+                  ))}
+                </Select>
+
+                <Button
+                  variant="secondary"
+                  onClick={handleClearFromParties}
+                  className="h-8 px-3 bg-white border border-zinc-200 hover:bg-zinc-100"
+                >
+                  เคลียร์
+                </Button>
+              </div>
+            </div>
+            
             <h3 className="font-bold text-xs text-zinc-400 uppercase tracking-wider mb-3">
               สมาชิก ({warTime.replace(':', '.')})
             </h3>
 
             {/* Mark Color Toolbar */}
             <div className="mb-3">
-              <div className="text-[10px] text-zinc-500 mb-2">
-                {selectedMemberIds.size > 0
-                  ? `เลือก ${selectedMemberIds.size} คน แล้วกดสีเพื่อมาร์ค`
-                  : 'คลิกเลือกสมาชิกได้ทั้งใน “รายชื่อ” และ “ในปาร์ตี้” แล้วกดสี'}
-              </div>
 
               <div className="flex items-center gap-2">
                 <button
